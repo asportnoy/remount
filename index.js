@@ -1,47 +1,72 @@
 const { Plugin } = require('powercord/entities');
 const watch = require('node-watch'); // from powercord/package-lock.json
 
+const watchers = new Map();
+
 module.exports = class Remount extends Plugin {
-  async startPlugin() {
+  async startPlugin () {
     powercord.api.commands.registerCommand({
       command: 'remount',
       usage: '{c} [plugin name]',
       description: 'remount a plugin',
       executor: this.startRemount.bind(this),
-      autocomplete: this.autocomplete.bind(this),
+      autocomplete: this.autocomplete.bind(this)
     });
     powercord.api.commands.registerCommand({
       command: 'watch',
       usage: '{c} [plugin name]',
       description: 'track changes in a plugin and automatically remount it',
       executor: this.runWatch.bind(this),
-      autocomplete: this.autocomplete.bind(this),
+      autocomplete: this.autocomplete.bind(this)
+    });
+    powercord.api.commands.registerCommand({
+      command: 'unwatch',
+      usage: '{c} [plugin name]',
+      description: 'undo watch',
+      executor: ([ id ]) => {
+        const plugins = this.settings.get('plugins', []);
+        if (!plugins.includes(id)) {
+          return { result: 'not watching' };
+        }
+
+        plugins.splice(plugins.indexOf(id), 1);
+        this.settings.set('plugins', plugins);
+        const watcher = watchers.get(id);
+        if (watcher) {
+          watcher.close();
+          watchers.delete(id);
+        }
+
+        return { result: 'unwatched' };
+      },
+      autocomplete: this.autocomplete.bind(this)
     });
     powercord.once('loaded', this.onLoaded.bind(this));
   }
 
-  pluginWillUnload() {
+  pluginWillUnload () {
     powercord.api.commands.unregisterCommand('watch');
+    powercord.api.commands.unregisterCommand('unwatch');
     powercord.api.commands.unregisterCommand('remount');
   }
 
-  onLoaded() {
+  onLoaded () {
     this.settings.get('plugins', []).forEach((id) => this.startWatch(id));
   }
 
-  runWatch([id]) {
+  runWatch ([ id ]) {
     if (powercord.pluginManager.plugins.has(id)) {
       if (this.settings.get('plugins', []).includes(id)) {
         return { result: 'already watching' };
       }
-      this.settings.set('plugins', [...this.settings.get('plugins', []), id]);
+      this.settings.set('plugins', [ ...this.settings.get('plugins', []), id ]);
       this.startWatch(id);
       return false;
     }
     return { result: 'plugin not found' };
   }
 
-  startRemount([id]) {
+  startRemount ([ id ]) {
     if (powercord.pluginManager.plugins.has(id)) {
       const plugin = powercord.pluginManager.plugins.get(id);
       powercord.pluginManager.remount(id);
@@ -51,20 +76,21 @@ module.exports = class Remount extends Plugin {
     return { result: 'plugin not found' };
   }
 
-  autocomplete([findId, ...args]) {
+  autocomplete ([ findId, ...args ]) {
     if (args.length) {
       return false;
     }
     return {
-      commands: [...powercord.pluginManager.plugins]
-        .filter(([id]) => id.toLowerCase().includes(findId.toLowerCase()))
-        .map(([id]) => ({ command: id })),
-      header: 'plugins list',
+      commands: [ ...powercord.pluginManager.plugins ]
+        .filter(([ id ]) => id.toLowerCase().includes(findId.toLowerCase()))
+        .map(([ id ]) => ({ command: id })),
+      header: 'plugins list'
     };
   }
 
-  startWatch(id) {
+  startWatch (id) {
     const plugin = powercord.pluginManager.plugins.get(id);
+    this.startRemount([ id ]);
     const watcher = watch(
       plugin.entityPath,
       { recursive: true },
@@ -73,26 +99,29 @@ module.exports = class Remount extends Plugin {
       }, 350)
     );
 
+    watchers.set(id, watcher);
+
     this.notice(id, plugin.manifest.name, () => {
       const plugins = this.settings.get('plugins', []);
 
       plugins.splice(plugins.indexOf(id), 1);
       this.settings.set('plugins', plugins);
       watcher.close();
+      watchers.delete(id);
     });
   }
 
-  notice(id, name, onClick) {
+  notice (id, name, onClick) {
     powercord.api.notices.sendAnnouncement(`remount-stop-${id}`, {
       message: `watching the plugin "${name}"`,
       button: {
         text: 'stop',
-        onClick,
-      },
+        onClick
+      }
     });
   }
 
-  toast(id, name) {
+  toast (id, name) {
     powercord.api.notices.sendToast('remountNotif', {
       header: 'remount',
       content: `successfully remounted "${name}"`,
@@ -101,10 +130,10 @@ module.exports = class Remount extends Plugin {
           text: 'Dismiss',
           color: 'green',
           look: 'outlined',
-          onClick: () => powercord.api.notices.closeToast('remountNotif'),
-        },
+          onClick: () => powercord.api.notices.closeToast('remountNotif')
+        }
       ],
-      timeout: 3e3,
+      timeout: 3e3
     });
   }
 };
